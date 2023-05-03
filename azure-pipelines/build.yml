@@ -1,0 +1,83 @@
+trigger:
+  - develop
+  - release
+  - master
+
+pool:
+  name: 'Mantiz'
+
+variables:
+  - ${{ if eq(variables['Build.SourceBranchName'], 'develop') }}:
+    - name: buildConfiguration
+      value: 'Debug'
+  - ${{ if eq(variables['Build.SourceBranchName'], 'release') }}:
+    - name: buildConfiguration
+      value: 'Release'
+  - ${{ if eq(variables['Build.SourceBranchName'], 'master') }}:
+    - name: buildConfiguration
+      value: 'Release'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildWorkerService
+        variables:
+          projects: 'MZ_WorkerService.csproj'
+        steps:
+          - task: DotNetCoreCLI@2
+            displayName: Restore
+            inputs:
+              command: 'restore'
+              projects: '$(projects)'
+              feedsToUse: 'select'
+          - task: SonarQubePrepare@5
+            enabled: true
+            inputs:
+             SonarQube: 'sqc-SonarQube'
+             scannerMode: 'MSBuild'
+             projectKey: 'MZ_WorkerService-KEY'
+             projectName: 'MZ_WorkerService'
+             projectVersion: '$(Build.BuildNumber)'
+             extraProperties: |
+                sonar.cs.vstest.reportsPaths=$(Agent.TempDirectory)/*.trx
+                sonar.cs.opencover.reportsPaths=$(Agent.TempDirectory)/*/coverage.opencover.xml
+          - task: DotNetCoreCLI@2
+            displayName: Build
+            inputs:
+              command: 'build'
+              projects: '$(projects)'
+              arguments: '--configuration $(buildConfiguration)'
+
+          - task: DotNetCoreCLI@2
+            displayName: DotNet Test
+            inputs:
+              command: 'test'
+              projects: 'WorkerService.Tests/WorkerService.Tests.csproj'
+              arguments: '--configuration $(buildConfiguration) --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover'
+              
+          - task: SonarQubeAnalyze@5
+            enabled: true
+          - task: SonarQubePublish@5
+            enabled: true
+            inputs:
+              pollingTimeoutSec: '300'
+          - task: PublishCodeCoverageResults@1
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: '$(Agent.TempDirectory)/**/coverage.cobertura.xml'
+          - task: sonar-buildbreaker@8
+            inputs:
+              SonarQube: 'sqc-SonarQube' 
+          - task: DotNetCoreCLI@2
+            displayName: Publish
+            inputs:
+              command: 'publish'
+              publishWebProjects: false
+              projects: '$(projects)'
+              arguments: '--configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory)/MZ_WorkerService'
+              modifyOutputPath: false
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/MZ_WorkerService'
+              artifact: 'MZ_WorkerService'
+              publishLocation: 'pipeline'
